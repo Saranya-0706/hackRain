@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-pandas
-numpy
-scipy
-requests
-cachetools
-pydantic

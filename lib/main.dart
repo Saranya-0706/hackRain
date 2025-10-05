@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'dart:math';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   runApp(const MyApp());
@@ -53,9 +56,8 @@ class _PredictionScreenState extends State<PredictionScreen> {
   double? avgRain;
   double? avgWind;
   double? avgHumidity;
-  int selectedChartIndex = 0; // 0-temp, 1-rain, 2-wind, 3-humidity
-  List<Map<String, dynamic>> chartData = [];
   final MapController mapController = MapController();
+  String geneAdvice = "";
 
   final TextEditingController searchController = TextEditingController();
   bool isPredictEnabled() =>
@@ -108,6 +110,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
     final pos = await Geolocator.getCurrentPosition();
     setState(() {
       selectedLocation = LatLng(pos.latitude, pos.longitude);
+      clearPreviousPrediction();
       mapController.move(selectedLocation, 12);
     });
     updateLocationName(selectedLocation);
@@ -179,9 +182,8 @@ class _PredictionScreenState extends State<PredictionScreen> {
   //backend call
   Future<void> getPrediction() async {
     setState(() {
-      result = "⏳ Fetching predictions for nearby days...";
+      result = "⏳ Fetching forecast data";
       avgTemp = avgRain = avgWind = avgHumidity = null;
-      chartData.clear();
     });
 
     final url = Uri.parse("http://127.0.0.1:8000/api/weather_risk");
@@ -189,60 +191,112 @@ class _PredictionScreenState extends State<PredictionScreen> {
     final lon = selectedLocation.longitude;
 
     try {
+      // Single API call for selected date
+      final response = await http.post(
+        url,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "lat": lat,
+          "lon": lon,
+          "start_year": 2020,
+          "end_year": 2024,
+        }),
+      );
 
-      DateTime base = selectedDate!;
-      List<DateTime> dateList = List.generate(7, (i) => base.add(Duration(days: i - 3)));
-
-      //api callas
-      List<Future<http.Response>> requests = dateList.map((date) {
-        return http.post(
-          url,
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "lat": lat,
-            "lon": lon,
-            "start_year": 2020,
-            "end_year": 2024,
-          }),
-        );
-      }).toList();
-
-      List<http.Response> responses = await Future.wait(requests);
-
-      List<Map<String, dynamic>> tempData = [];
-
-      for (int i = 0; i < responses.length; i++) {
-        var response = responses[i];
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final stats = data["result"];
-          tempData.add({
-            "date": dateList[i],
-            "temp": stats["avg_temp_C"]?.toDouble() ?? 0.0,
-            "rain": stats["avg_rain_mm"]?.toDouble() ?? 0.0,
-            "wind": stats["avg_wind_kmh"]?.toDouble() ?? 0.0,
-            "humidity": stats["avg_humidity_pct"]?.toDouble() ?? 0.0,
-          });
-        }
-      }
-
-      if (tempData.isNotEmpty) {
-        final currentDay = tempData[2]; // middle = selected date
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final stats = data["result"];
 
         setState(() {
-          chartData = tempData;
-          avgTemp = currentDay["temp"];
-          avgRain = currentDay["rain"];
-          avgWind = currentDay["wind"];
-          avgHumidity = currentDay["humidity"];
+          avgTemp = stats["avg_temp_C"]?.toDouble() ?? 0.0;
+          avgRain = stats["avg_rain_mm"]?.toDouble() ?? 0.0;
+          avgWind = stats["avg_wind_kmh"]?.toDouble() ?? 0.0;
+          avgHumidity = stats["avg_humidity_pct"]?.toDouble() ?? 0.0;
+          geneAdvice = stats["gene_advice"] ?? "No advice available";
           result = "success";
         });
       } else {
-        setState(() => result = "❌ No valid responses from backend");
+        setState(() => result = "❌ Failed to fetch data from backend");
       }
     } catch (e) {
       setState(() => result = "❌ Error: $e");
     }
+  }
+
+  Future<void> downloadPrediction() async {
+    if (avgTemp == null || avgRain == null || avgWind == null || avgHumidity == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No prediction data to download.")),
+      );
+      return;
+    }
+
+    // Ask user for format
+    String? format = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Select download format"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text("JSON"),
+                onTap: () => Navigator.pop(context, "json"),
+              ),
+              ListTile(
+                title: const Text("CSV"),
+                onTap: () => Navigator.pop(context, "csv"),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (format == null) return; // User cancelled
+
+    // Request storage permission on Android
+    if (Platform.isAndroid) {
+      var status = await Permission.storage.request();
+      if (!status.isGranted) return;
+    }
+
+    // Prepare data
+    Map<String, dynamic> data = {
+      "Temperature_C": avgTemp,
+      "Rain_mm": avgRain,
+      "Wind_kmh": avgWind,
+      "Humidity_pct": avgHumidity,
+      "Gene_Advice": geneAdvice,
+    };
+
+    String content = "";
+    String fileName = "prediction_${DateTime.now().millisecondsSinceEpoch}.$format";
+
+    if (format == "json") {
+      content = jsonEncode(data);
+    } else if (format == "csv") {
+      content = "Parameter,Value\n";
+      data.forEach((key, value) {
+        content += "$key,$value\n";
+      });
+    }
+
+    // Get directory
+    Directory dir;
+    if (Platform.isAndroid) {
+      dir = (await getExternalStorageDirectories(type: StorageDirectory.downloads))!.first;
+    } else {
+      dir = await getApplicationDocumentsDirectory();
+    }
+
+    File file = File("${dir.path}/$fileName");
+    await file.writeAsString(content);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("File saved as $fileName in ${dir.path}")),
+    );
   }
 
 
@@ -295,118 +349,6 @@ class _PredictionScreenState extends State<PredictionScreen> {
     );
   }
 
-  Widget _buildBarChart() {
-    if (chartData.isEmpty) {
-      return const Text("No data available for nearby days.");
-    }
-
-    List<BarChartGroupData> groups = [];
-    for (int i = 0; i < chartData.length; i++) {
-      double value;
-      switch (selectedChartIndex) {
-        case 0: value = chartData[i]['temp']; break;
-        case 1: value = chartData[i]['rain']; break;
-        case 2: value = chartData[i]['wind']; break;
-        case 3: value = chartData[i]['humidity']; break;
-        default: value = 0;
-      }
-
-      final date = chartData[i]['date'] as DateTime;
-      bool isSelected = date.day == selectedDate?.day &&
-          date.month == selectedDate?.month;
-
-      groups.add(
-        BarChartGroupData(
-          x: i,
-          barRods: [
-            BarChartRodData(
-              toY: value,
-              color: isSelected ? Colors.green : Colors.blueAccent,
-              width: 18,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ],
-        ),
-      );
-    }
-
-    String unit = ["°C", "mm", "km/h", "%"][selectedChartIndex];
-    String label = ["Temperature", "Rainfall", "Wind Speed", "Humidity"][selectedChartIndex];
-
-    return Card(
-      elevation: 3,
-      color: Colors.white,
-      surfaceTintColor: primCol,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Wrap(
-              spacing: 10,
-              runSpacing: 5,
-              alignment: WrapAlignment.center,
-              children: List.generate(4, (i) {
-                List<String> labels = ["Temp", "Rain", "Wind", "Humidity"];
-                return ChoiceChip(
-                  label: Text(labels[i]),
-                  selected: selectedChartIndex == i,
-                  onSelected: (_) => setState(() => selectedChartIndex = i),
-                  selectedColor: Colors.lightBlue[300],
-                  labelStyle: TextStyle(
-                    color: selectedChartIndex == i ? Colors.white : Colors.black,
-                  ),
-                  backgroundColor: Colors.grey[200],
-                );
-              }),
-            ),
-            const SizedBox(height: 18),
-            Text("$label ($unit)",
-                style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blueGrey[700])),
-
-            const SizedBox(height: 18),
-
-            SizedBox(
-              height: 220,
-              child: BarChart(
-                BarChartData(
-                  borderData: FlBorderData(show: false),
-                  gridData: FlGridData(show: false),
-                  titlesData: FlTitlesData(
-                    leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) {
-                          int index = value.toInt();
-                          if (index < 0 || index >= chartData.length) {
-                            return const SizedBox();
-                          }
-                          DateTime d = chartData[index]['date'];
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 6.0),
-                            child: Text(
-                              "${d.day}/${d.month}",
-                              style: const TextStyle(fontSize: 10),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                  barGroups: groups,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -422,8 +364,8 @@ class _PredictionScreenState extends State<PredictionScreen> {
             child: FlutterMap(
               mapController: mapController,
               options: MapOptions(
-                //center: selectedLocation,
-                //zoom: zoom,
+                initialCenter: selectedLocation,
+                initialZoom: zoom,
                 onTap: (tapPoint, point) {
                   setState(() {
                     selectedLocation = point;
@@ -641,17 +583,34 @@ class _PredictionScreenState extends State<PredictionScreen> {
                         _buildStatCard(Icons.air, "${avgWind!.toStringAsFixed(1)} km/h", "Wind Speed", Colors.lightBlueAccent),
                       ],
                     ),
-                    const SizedBox(height: 32),
-                    Text(
-                      "📅 Nearby Dates Forecast",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: primCol,
+                    const SizedBox(height: 25),
+                    Card(
+                      surfaceTintColor: primCol,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Text(
+                          "🧠 Gene Advice:\n$geneAdvice",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    _buildBarChart(),
+                    const SizedBox(height: 25),
+                    ElevatedButton.icon(
+                      onPressed: downloadPrediction,
+                      icon: const Icon(Icons.download),
+                      label: const Text("Download Output"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primCol,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                        minimumSize: const Size.fromHeight(50),
+                      ),
+                    ),
                   ]
                   else ...[
                     const SizedBox(height: 15),

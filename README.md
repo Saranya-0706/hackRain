@@ -1,6 +1,6 @@
 # 🌦 hackRain
 
-A Flutter application that predicts weather conditions, including rainfall, temperature, wind, and humidity for a selected location and date. The app also provides general weather advice and graphical insights based on the analyzed data. It leverages the NASA POWER (Prediction Of Worldwide Energy Resources) API to fetch accurate weather and climatological data for the selected location and date range, ensuring reliable predictions and informative results.
+A Flutter application that predicts weather conditions, including rainfall, temperature, wind, and humidity for a selected location and date. The app also provides general weather advice based on the analyzed data. It leverages the NASA POWER (Prediction Of Worldwide Energy Resources) API to fetch accurate weather and climatological data for the selected location and date range, ensuring reliable predictions and informative results.
 
 ---
 
@@ -9,8 +9,8 @@ A Flutter application that predicts weather conditions, including rainfall, temp
 - Select location by search, map tap, or current GPS location.
 - Choose a date for weather prediction.
 - View temperature, rainfall, wind speed, and humidity.
-- Interactive bar chart for nearby dates’ weather trends.
 - Provides general advice based on predicted weather.
+- Can Download output data in csv or json format
 
 ---
 
@@ -19,7 +19,6 @@ A Flutter application that predicts weather conditions, including rainfall, temp
 - Flutter (Dart)
 - flutter_map for maps
 - geolocator for GPS
-- fl_chart for charts
 - OpenStreetMap Nominatim API for search and reverse geocoding
 - Fast API for backend
 - Gemini API for advice based on predicted weather
@@ -30,11 +29,18 @@ A Flutter application that predicts weather conditions, including rainfall, temp
 
 ---
 
+## 🔗 Demo Video Link
+
+https://drive.google.com/file/d/1gNJCkqdykXjtyaqCsrwL4MHvBgIYVHES/view?usp=drivesdk 
+
+---
+
 ## 📷 ScreenShots
 
 <img width="1920" height="1080" alt="Screenshot (30)" src="https://github.com/user-attachments/assets/976feb1a-98fd-4b93-bb87-ebc77d426b3e" />
 <img width="1920" height="1080" alt="Screenshot (31)" src="https://github.com/user-attachments/assets/33f73d29-8f18-4721-8336-3b1860707fd7" />
 <img width="1920" height="1080" alt="Screenshot (33)" src="https://github.com/user-attachments/assets/2dcc0a95-4d29-4786-9165-dd2b908900e4" />
+<img width="1920" height="1080" alt="Screenshot (34)" src="https://github.com/user-attachments/assets/998de538-ff0c-41fd-9d07-ed702d69b4fe" />
 
 ---
 
@@ -43,7 +49,16 @@ A Flutter application that predicts weather conditions, including rainfall, temp
 1) Search for a location, tap on the map, or use your current location.
 2) Pick a date for prediction.
 3) Click “Predict Rainfall” to fetch weather predictions.
-4) View weather stats, advice, and nearby dates forecast chart.
+4) View weather stats, advice.
+5) Download the ouput in json/csv format
+
+---
+
+## 📃Future Goals
+Replace current advanced statistics with ML-powered predictions to generate smarter, data-driven insights for different weather parameters
+
+WIP :
+https://github.com/Sathwik-parimi-07/spaceapps/blob/main/app.py
 
 ---
 

@@ -4,6 +4,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'dart:math';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
 
 void main() {
   runApp(const MyApp());
@@ -21,7 +24,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSwatch().copyWith(
           primary: Colors.lightBlue[400],
           secondary: Colors.blueAccent,
-        ),
+        ),useMaterial3:  true,
       ),
       home: const PredictionScreen(),
       debugShowCheckedModeBanner: false,
@@ -44,13 +47,19 @@ class _PredictionScreenState extends State<PredictionScreen> {
   LatLng selectedLocation = LatLng(28.6139, 77.2090); //Default:Delhi
   double zoom = 12.0;
   DateTime? selectedDate;
-  TimeOfDay? selectedTime;
+  //TimeOfDay? selectedTime;
   String result = "";
+  double? avgTemp;
+  double? avgRain;
+  double? avgWind;
+  double? avgHumidity;
+  int selectedChartIndex = 0; // 0-temp, 1-rain, 2-wind, 3-humidity
+  List<Map<String, dynamic>> chartData = [];
   final MapController mapController = MapController();
 
   final TextEditingController searchController = TextEditingController();
   bool isPredictEnabled() =>
-      selectedDate != null && selectedTime != null && selectedLocation != null;
+      selectedDate != null && selectedLocation != null;
 
 
   @override
@@ -71,17 +80,19 @@ class _PredictionScreenState extends State<PredictionScreen> {
       firstDate: DateTime.now(),
       lastDate: DateTime(2100),
     );
-    if (date != null) setState(() => selectedDate = date);
+    if (date != null)
+      setState(() => selectedDate = date);
+    clearPreviousPrediction();
   }
 
   // Pick Time
-  Future<void> pickTime() async {
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-    );
-    if (time != null) setState(() => selectedTime = time);
-  }
+  // Future<void> pickTime() async {
+  //   final time = await showTimePicker(
+  //     context: context,
+  //     initialTime: TimeOfDay.now(),
+  //   );
+  //   if (time != null) setState(() => selectedTime = time);
+  // }
 
   // Get Current Location
   Future<void> getCurrentLocation() async {
@@ -119,6 +130,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
           final lon = double.parse(data[0]['lon']);
           setState(() {
             selectedLocation = LatLng(lat, lon);
+            clearPreviousPrediction();
             mapController.move(selectedLocation, 12);
           });
           updateLocationName(selectedLocation);
@@ -164,44 +176,236 @@ class _PredictionScreenState extends State<PredictionScreen> {
     }
   }
 
-  // Dummy backend call
+  //backend call
   Future<void> getPrediction() async {
-    final eventDateTime = DateTime(
-      selectedDate!.year,
-      selectedDate!.month,
-      selectedDate!.day,
-      selectedTime!.hour,
-      selectedTime!.minute,
-    ).toIso8601String();
+    setState(() {
+      result = "⏳ Fetching predictions for nearby days...";
+      avgTemp = avgRain = avgWind = avgHumidity = null;
+      chartData.clear();
+    });
 
-    final url = Uri.parse("http://10.0.2.2:8000/predict"); // Replace with backend
+    final url = Uri.parse("http://127.0.0.1:8000/api/weather_risk");
+    final lat = selectedLocation.latitude;
+    final lon = selectedLocation.longitude;
 
     try {
-      final response = await http.post(
-        url,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "latitude": selectedLocation.latitude,
-          "longitude": selectedLocation.longitude,
-          "datetime": eventDateTime,
-        }),
-      );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      DateTime base = selectedDate!;
+      List<DateTime> dateList = List.generate(7, (i) => base.add(Duration(days: i - 3)));
+
+      //api callas
+      List<Future<http.Response>> requests = dateList.map((date) {
+        return http.post(
+          url,
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "lat": lat,
+            "lon": lon,
+            "start_year": 2020,
+            "end_year": 2024,
+          }),
+        );
+      }).toList();
+
+      List<http.Response> responses = await Future.wait(requests);
+
+      List<Map<String, dynamic>> tempData = [];
+
+      for (int i = 0; i < responses.length; i++) {
+        var response = responses[i];
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final stats = data["result"];
+          tempData.add({
+            "date": dateList[i],
+            "temp": stats["avg_temp_C"]?.toDouble() ?? 0.0,
+            "rain": stats["avg_rain_mm"]?.toDouble() ?? 0.0,
+            "wind": stats["avg_wind_kmh"]?.toDouble() ?? 0.0,
+            "humidity": stats["avg_humidity_pct"]?.toDouble() ?? 0.0,
+          });
+        }
+      }
+
+      if (tempData.isNotEmpty) {
+        final currentDay = tempData[2]; // middle = selected date
+
         setState(() {
-          result = "🌧 Prediction: ${data['prediction']}";
+          chartData = tempData;
+          avgTemp = currentDay["temp"];
+          avgRain = currentDay["rain"];
+          avgWind = currentDay["wind"];
+          avgHumidity = currentDay["humidity"];
+          result = "success";
         });
       } else {
-        setState(() {
-          result = "❌ Error: ${response.body}";
-        });
+        setState(() => result = "❌ No valid responses from backend");
       }
     } catch (e) {
-      setState(() {
-        result = "❌ Error connecting to backend.";
-      });
+      setState(() => result = "❌ Error: $e");
     }
+  }
+
+
+  void clearPreviousPrediction() {
+    setState(() {
+      result = "";
+      avgTemp = avgRain = avgWind = avgHumidity = null;
+    });
+  }
+
+  //o/p card ui
+  Widget _buildStatCard(IconData icon, String value, String label, Color color) {
+    return Container(
+      width: 130,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 6,
+            offset: const Offset(2, 3),
+          ),
+        ],
+        border: Border.all(color: color.withOpacity(0.4), width: 1.2),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 32, color: color),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[700],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBarChart() {
+    if (chartData.isEmpty) {
+      return const Text("No data available for nearby days.");
+    }
+
+    List<BarChartGroupData> groups = [];
+    for (int i = 0; i < chartData.length; i++) {
+      double value;
+      switch (selectedChartIndex) {
+        case 0: value = chartData[i]['temp']; break;
+        case 1: value = chartData[i]['rain']; break;
+        case 2: value = chartData[i]['wind']; break;
+        case 3: value = chartData[i]['humidity']; break;
+        default: value = 0;
+      }
+
+      final date = chartData[i]['date'] as DateTime;
+      bool isSelected = date.day == selectedDate?.day &&
+          date.month == selectedDate?.month;
+
+      groups.add(
+        BarChartGroupData(
+          x: i,
+          barRods: [
+            BarChartRodData(
+              toY: value,
+              color: isSelected ? Colors.green : Colors.blueAccent,
+              width: 18,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ],
+        ),
+      );
+    }
+
+    String unit = ["°C", "mm", "km/h", "%"][selectedChartIndex];
+    String label = ["Temperature", "Rainfall", "Wind Speed", "Humidity"][selectedChartIndex];
+
+    return Card(
+      elevation: 3,
+      color: Colors.white,
+      surfaceTintColor: primCol,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 5,
+              alignment: WrapAlignment.center,
+              children: List.generate(4, (i) {
+                List<String> labels = ["Temp", "Rain", "Wind", "Humidity"];
+                return ChoiceChip(
+                  label: Text(labels[i]),
+                  selected: selectedChartIndex == i,
+                  onSelected: (_) => setState(() => selectedChartIndex = i),
+                  selectedColor: Colors.lightBlue[300],
+                  labelStyle: TextStyle(
+                    color: selectedChartIndex == i ? Colors.white : Colors.black,
+                  ),
+                  backgroundColor: Colors.grey[200],
+                );
+              }),
+            ),
+            const SizedBox(height: 18),
+            Text("$label ($unit)",
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blueGrey[700])),
+
+            const SizedBox(height: 18),
+
+            SizedBox(
+              height: 220,
+              child: BarChart(
+                BarChartData(
+                  borderData: FlBorderData(show: false),
+                  gridData: FlGridData(show: false),
+                  titlesData: FlTitlesData(
+                    leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          int index = value.toInt();
+                          if (index < 0 || index >= chartData.length) {
+                            return const SizedBox();
+                          }
+                          DateTime d = chartData[index]['date'];
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 6.0),
+                            child: Text(
+                              "${d.day}/${d.month}",
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  barGroups: groups,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -223,6 +427,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
                 onTap: (tapPoint, point) {
                   setState(() {
                     selectedLocation = point;
+                    clearPreviousPrediction();
                   });
                   updateLocationName(point);
                   searchController.clear();
@@ -288,7 +493,11 @@ class _PredictionScreenState extends State<PredictionScreen> {
             flex: 2,
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
+              child: SingleChildScrollView(
+                child:
+                ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: MediaQuery.of(context).size.height), child:
+                Column(
                 children: [
                   // Search Bar
                   TextField(
@@ -330,20 +539,20 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   const SizedBox(height: 10),
 
                   // Time Picker
-                  ElevatedButton(
-                    onPressed: pickTime,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primCol,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                      minimumSize: const Size.fromHeight(50),
-                    ),
-                    child: Text(selectedTime == null
-                        ? "Select Time"
-                        : "${selectedTime!.hour}:${selectedTime!.minute.toString().padLeft(2, '0')}"),
-                  ),
-                  const SizedBox(height: 15),
+                  // ElevatedButton(
+                  //   onPressed: pickTime,
+                  //   style: ElevatedButton.styleFrom(
+                  //     backgroundColor: primCol,
+                  //     foregroundColor: Colors.white,
+                  //     shape: RoundedRectangleBorder(
+                  //         borderRadius: BorderRadius.circular(8)),
+                  //     minimumSize: const Size.fromHeight(50),
+                  //   ),
+                  //   child: Text(selectedTime == null
+                  //       ? "Select Time"
+                  //       : "${selectedTime!.hour}:${selectedTime!.minute.toString().padLeft(2, '0')}"),
+                  // ),
+                  // const SizedBox(height: 15),
 
                   // Selected Location Text
                   ElevatedButton(
@@ -398,13 +607,63 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   const SizedBox(height: 15),
 
                   // Prediction Result
-                  Text(
+                  if (result.startsWith("⏳"))...[
+                    const Padding(
+                      padding: EdgeInsets.only(top: 30),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  ],
+                  if (result == "success") ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      "🌦 Weather ForeCast",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: primCol,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Wrap(
+                      spacing: 15,
+                      runSpacing: 15,
+                      children: [
+                        _buildStatCard(Icons.thermostat, "${avgTemp!.toStringAsFixed(1)} °C", "Temperature", Colors.orangeAccent),
+                        _buildStatCard(Icons.water_drop, "${avgRain!.toStringAsFixed(1)} mm", "Rainfall", Colors.blueAccent),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+                    Wrap(
+                      spacing: 15,
+                      runSpacing: 15,
+                      children: [
+                        _buildStatCard(Icons.cloud, "${avgHumidity!.toStringAsFixed(0)}%", "Humidity", Colors.indigoAccent),
+                        _buildStatCard(Icons.air, "${avgWind!.toStringAsFixed(1)} km/h", "Wind Speed", Colors.lightBlueAccent),
+                      ],
+                    ),
+                    const SizedBox(height: 32),
+                    Text(
+                      "📅 Nearby Dates Forecast",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: primCol,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _buildBarChart(),
+                  ]
+                  else ...[
+                    const SizedBox(height: 15),
+                    Text(
                     result,
                     style: const TextStyle(fontSize: 16),
                     textAlign: TextAlign.center,
-                  ),
-                  const Spacer(),
+                    ),
+                  ],
                 ],
+              ),
+                ),
               ),
             ),
           ),

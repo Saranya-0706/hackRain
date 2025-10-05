@@ -29,9 +29,9 @@ A Flutter application that predicts weather conditions, including rainfall, temp
 
 ---
 
-## 🔗 Demo Video Link
+## 🔗 Demo Video and presentation Link
 
-https://drive.google.com/file/d/1gNJCkqdykXjtyaqCsrwL4MHvBgIYVHES/view?usp=drivesdk 
+https://drive.google.com/drive/folders/1p7Ca_wzGPiutwe0WL3MYwSKQk02tfzgS
 
 ---
 
